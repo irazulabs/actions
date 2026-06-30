@@ -1,0 +1,45 @@
+name: validate
+
+on:
+  pull_request:
+  push:
+
+permissions:
+  contents: read
+
+jobs:
+  publish-to-appgallery:
+    name: publish-to-appgallery / python ${{ matrix.python-version }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version:
+          - '3.11'
+          - '3.12'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install dependencies
+        run: python -m pip install -e publish-to-appgallery[dev]
+
+      - name: Ruff lint
+        run: ruff check publish-to-appgallery
+
+      - name: Ruff format
+        run: ruff format --check publish-to-appgallery
+
+      - name: Mypy
+        run: mypy publish-to-appgallery/src
+
+      - name: Pytest
+        run: pytest publish-to-appgallery
+

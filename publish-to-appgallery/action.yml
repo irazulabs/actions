@@ -1,0 +1,116 @@
+name: Publish to Huawei AppGallery
+author: Irazu Labs
+description: Publish an Android App Bundle to Huawei AppGallery.
+branding:
+  icon: upload-cloud
+  color: orange
+
+inputs:
+  artifact-path:
+    description: Local Android App Bundle path.
+    required: true
+  app-id:
+    description: AppGallery Connect app ID.
+    required: true
+  chinese-mainland-flag:
+    description: Huawei Chinese mainland flag required by the AppGallery account or app distribution.
+    required: true
+  auth-mode:
+    description: 'Huawei authentication mode: service-account or api-client.'
+    required: false
+    default: service-account
+  service-account-json:
+    description: Huawei service account JSON for service-account auth mode.
+    required: false
+  client-id:
+    description: Huawei API client ID for api-client auth mode.
+    required: false
+  client-secret:
+    description: Huawei API client secret for api-client auth mode.
+    required: false
+  domain:
+    description: Huawei API domain override.
+    required: false
+    default: https://connect-api.cloud.huawei.com/api
+  dry-run:
+    description: Validate and print the planned Huawei calls without uploading or submitting.
+    required: false
+    default: 'false'
+  expected-package:
+    description: Expected Android package ID in the AAB.
+    required: false
+  min-version-code:
+    description: Minimum accepted Android versionCode when bundle metadata is available.
+    required: false
+  max-aab-size-mb:
+    description: Maximum accepted AAB size in megabytes.
+    required: false
+    default: '150'
+  bundletool-jar:
+    description: Optional path to bundletool.jar for package and versionCode inspection.
+    required: false
+  parse-wait-seconds:
+    description: Seconds to wait for Huawei async package parsing before submission.
+    required: false
+    default: '120'
+  release-remark:
+    description: Optional release remark passed to Huawei AppGallery submission.
+    required: false
+
+outputs:
+  artifact-file-name:
+    description: File name of the submitted Android App Bundle.
+    value: ${{ steps.publish.outputs.artifact-file-name }}
+  artifact-path:
+    description: Local path of the validated Android App Bundle.
+    value: ${{ steps.publish.outputs.artifact-path }}
+  artifact-sha256:
+    description: SHA-256 digest of the validated Android App Bundle.
+    value: ${{ steps.publish.outputs.artifact-sha256 }}
+  artifact-size-bytes:
+    description: Size of the validated Android App Bundle in bytes.
+    value: ${{ steps.publish.outputs.artifact-size-bytes }}
+  package-name:
+    description: Android package name when bundle metadata was inspected.
+    value: ${{ steps.publish.outputs.package-name }}
+  version-code:
+    description: Android versionCode when bundle metadata was inspected.
+    value: ${{ steps.publish.outputs.version-code }}
+  dry-run:
+    description: Whether the publisher ran in dry-run mode.
+    value: ${{ steps.publish.outputs.dry-run }}
+  object-id:
+    description: Huawei OBS object ID returned after upload.
+    value: ${{ steps.publish.outputs.object-id }}
+  submitted:
+    description: Whether the publisher submitted the artifact to Huawei for release.
+    value: ${{ steps.publish.outputs.submitted }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install AppGallery publisher
+      shell: bash
+      run: python -m pip install "${GITHUB_ACTION_PATH}"
+
+    - name: Publish Android App Bundle
+      id: publish
+      shell: bash
+      env:
+        PUBLISH_TO_APPGALLERY_ARTIFACT_PATH: ${{ inputs.artifact-path }}
+        PUBLISH_TO_APPGALLERY_APP_ID: ${{ inputs.app-id }}
+        PUBLISH_TO_APPGALLERY_CHINESE_MAINLAND_FLAG: ${{ inputs.chinese-mainland-flag }}
+        PUBLISH_TO_APPGALLERY_AUTH_MODE: ${{ inputs.auth-mode }}
+        PUBLISH_TO_APPGALLERY_SERVICE_ACCOUNT_JSON: ${{ inputs.service-account-json }}
+        PUBLISH_TO_APPGALLERY_CLIENT_ID: ${{ inputs.client-id }}
+        PUBLISH_TO_APPGALLERY_CLIENT_SECRET: ${{ inputs.client-secret }}
+        PUBLISH_TO_APPGALLERY_DOMAIN: ${{ inputs.domain }}
+        PUBLISH_TO_APPGALLERY_DRY_RUN: ${{ inputs.dry-run }}
+        PUBLISH_TO_APPGALLERY_EXPECTED_PACKAGE: ${{ inputs.expected-package }}
+        PUBLISH_TO_APPGALLERY_MIN_VERSION_CODE: ${{ inputs.min-version-code }}
+        PUBLISH_TO_APPGALLERY_MAX_AAB_SIZE_MB: ${{ inputs.max-aab-size-mb }}
+        PUBLISH_TO_APPGALLERY_BUNDLETOOL_JAR: ${{ inputs.bundletool-jar }}
+        PUBLISH_TO_APPGALLERY_PARSE_WAIT_SECONDS: ${{ inputs.parse-wait-seconds }}
+        PUBLISH_TO_APPGALLERY_RELEASE_REMARK: ${{ inputs.release-remark }}
+      run: python -m publish_to_appgallery
+

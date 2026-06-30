@@ -1,0 +1,21 @@
+# Irazu Labs Actions
+
+Purpose: stable entrypoint for AI agents working in this repository.
+Status: stable.
+Audience: AI agents and maintainers.
+
+Read these files first:
+
+1. `AGENTS.md`
+2. `docs/README.md`
+3. `docs/action-index.md`
+4. The target action's `README.md`
+5. The target action's `docs/development.md`
+
+Rules:
+
+- Keep actions generic and reusable.
+- Do not add customer-specific identifiers as defaults.
+- Treat credentials and live API responses as sensitive.
+- Update root and action-level docs when public interfaces change.
+
