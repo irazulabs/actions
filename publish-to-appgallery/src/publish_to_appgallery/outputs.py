@@ -1,16 +1,11 @@
 from __future__ import annotations
 
+import uuid
 from pathlib import Path
 
 from publish_to_appgallery.artifact import ArtifactInfo
 from publish_to_appgallery.client import PublishResult
 from publish_to_appgallery.config import PublishConfig
-
-
-def _escape_value(value: object | None) -> str:
-    if value is None:
-        return ""
-    return str(value).replace("%", "%25").replace("\n", "%0A").replace("\r", "%0D")
 
 
 def output_values(
@@ -39,9 +34,17 @@ def write_github_outputs(
 ) -> None:
     if output_path is None:
         return
-    lines = [
-        f"{name}={_escape_value(value)}\n"
+    values = {
+        name: "" if value is None else str(value)
         for name, value in output_values(artifact, config, result).items()
-    ]
-    with output_path.open("a", encoding="utf-8") as handle:
-        handle.writelines(lines)
+    }
+    value_lines = {line for value in values.values() for line in value.splitlines()}
+    delimiter = f"github_output_{uuid.uuid4().hex}"
+    while delimiter in value_lines:
+        delimiter = f"github_output_{uuid.uuid4().hex}"
+
+    records = "".join(
+        f"{name}<<{delimiter}\n{value}\n{delimiter}\n" for name, value in values.items()
+    )
+    with output_path.open("a", encoding="utf-8", newline="") as handle:
+        handle.write(records)

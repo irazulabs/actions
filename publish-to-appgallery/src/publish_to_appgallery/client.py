@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 import urllib.error
 import urllib.parse
@@ -8,7 +9,7 @@ import urllib.request
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 from publish_to_appgallery.artifact import ArtifactInfo
 from publish_to_appgallery.auth import (
@@ -17,11 +18,29 @@ from publish_to_appgallery.auth import (
     create_api_client_auth,
     create_service_account_auth,
 )
-from publish_to_appgallery.config import PublishConfig
+from publish_to_appgallery.config import PublishConfig, ReleaseMode
+
+API_TIMEOUT_SECONDS = 30.0
+UPLOAD_TIMEOUT_SECONDS = 300.0
+MAX_ATTEMPTS = 3
+RETRYABLE_STATUSES = {408, 429, 500, 502, 503, 504}
+MAX_DIAGNOSTIC_LENGTH = 200
 
 
 class HuaweiApiError(RuntimeError):
     """Raised when Huawei rejects or fails an API request."""
+
+
+class HuaweiRejectedError(HuaweiApiError):
+    """Raised when Huawei explicitly rejects an API request."""
+
+
+class HuaweiHttpError(HuaweiApiError):
+    """Raised when Huawei returns a non-success HTTP response."""
+
+    def __init__(self, message: str, status: int) -> None:
+        super().__init__(message)
+        self.status = status
 
 
 @dataclass(frozen=True)
@@ -30,6 +49,7 @@ class HttpRequest:
     url: str
     headers: dict[str, str]
     body: bytes | None = None
+    timeout: float = API_TIMEOUT_SECONDS
 
 
 @dataclass(frozen=True)
@@ -54,6 +74,22 @@ Transport = Callable[[HttpRequest], HttpResponse]
 Sleeper = Callable[[float], None]
 
 
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(
+        self,
+        req: urllib.request.Request,
+        fp: Any,
+        code: int,
+        msg: str,
+        headers: Any,
+        newurl: str,
+    ) -> None:
+        return None
+
+
+_NO_REDIRECT_OPENER = urllib.request.build_opener(_NoRedirectHandler())
+
+
 def default_transport(request: HttpRequest) -> HttpResponse:
     urllib_request = urllib.request.Request(
         request.url,
@@ -62,7 +98,7 @@ def default_transport(request: HttpRequest) -> HttpResponse:
         method=request.method,
     )
     try:
-        with urllib.request.urlopen(urllib_request) as response:
+        with _NO_REDIRECT_OPENER.open(urllib_request, timeout=request.timeout) as response:
             return HttpResponse(
                 status=response.status,
                 reason=response.reason,
@@ -95,34 +131,75 @@ def _append_query(url: str, params: Mapping[str, object | None]) -> str:
     return f"{url}?{urllib.parse.urlencode(query)}"
 
 
-def _parse_json_response(response: HttpResponse, url: str) -> dict[str, object]:
-    text = response.body.decode("utf-8") if response.body else ""
+def _safe_diagnostic(value: object) -> str:
+    text = " ".join(str(value).split())
+    text = re.sub(r"https?://[^\s\"'<>]+", "[redacted URL]", text, flags=re.IGNORECASE)
+    return text[:MAX_DIAGNOSTIC_LENGTH]
+
+
+def _parse_json_response(
+    response: HttpResponse,
+    *,
+    include_error_body: bool,
+) -> dict[str, object]:
+    text = response.body.decode("utf-8", errors="replace") if response.body else ""
     if not response.ok:
-        raise HuaweiApiError(f"Huawei API request failed: {response.status} {response.reason}")
+        reason = _safe_diagnostic(response.reason)
+        detail = _safe_diagnostic(text) if include_error_body and text.strip() else ""
+        raise HuaweiHttpError(
+            f"Huawei API request failed: {response.status}{f' {reason}' if reason else ''}"
+            f"{f': {detail}' if detail else ''}",
+            response.status,
+        )
     if text.strip() == "":
         return {}
     try:
         parsed = json.loads(text)
     except json.JSONDecodeError as exc:
-        raise HuaweiApiError(
-            f"Huawei API returned non-JSON response from {url}: {text[:240]}"
-        ) from exc
+        raise HuaweiApiError("Huawei API returned a non-JSON response") from exc
     if not isinstance(parsed, dict):
-        raise HuaweiApiError(f"Huawei API returned a non-object JSON response from {url}")
+        raise HuaweiApiError("Huawei API returned a non-object JSON response")
     return cast(dict[str, object], parsed)
 
 
 def _assert_huawei_success(body: Mapping[str, object], operation_name: str) -> None:
     ret = body.get("ret")
     if ret is None:
-        return
-    parsed_ret = json.loads(ret) if isinstance(ret, str) else ret
+        raise HuaweiApiError(f"{operation_name} did not return a ret code")
+    try:
+        parsed_ret = json.loads(ret) if isinstance(ret, str) else ret
+    except (json.JSONDecodeError, TypeError) as exc:
+        raise HuaweiApiError(f"{operation_name} returned an invalid ret payload") from exc
     if not isinstance(parsed_ret, Mapping):
         raise HuaweiApiError(f"{operation_name} returned an invalid ret payload")
     code = parsed_ret.get("code")
-    if int(str(code)) != 0:
-        message = parsed_ret.get("msg") or parsed_ret
-        raise HuaweiApiError(f"{operation_name} failed: {message}")
+    try:
+        parsed_code = int(str(code))
+    except (TypeError, ValueError) as exc:
+        raise HuaweiApiError(f"{operation_name} returned an invalid ret code") from exc
+    if isinstance(code, bool) or parsed_code != 0:
+        message = _safe_diagnostic(parsed_ret.get("msg") or "Huawei rejected the request")
+        raise HuaweiRejectedError(f"{operation_name} failed: {message}")
+
+
+def _stage_error(
+    stage: str,
+    error: Exception,
+    *,
+    object_id: str | None = None,
+    ambiguous_submission: bool = False,
+) -> HuaweiApiError:
+    object_context = (
+        f" for object ID {_safe_diagnostic(object_id)}" if object_id is not None else ""
+    )
+    guidance = (
+        " Submission outcome is unknown; check AppGallery Connect before retrying."
+        if ambiguous_submission
+        else ""
+    )
+    return HuaweiApiError(
+        f"Huawei {stage} failed{object_context}: {_safe_diagnostic(error)}.{guidance}"
+    )
 
 
 class HuaweiClient:
@@ -137,21 +214,51 @@ class HuaweiClient:
         self._sleeper = sleeper or default_sleeper
 
     def publish(self, artifact: ArtifactInfo) -> PublishResult:
-        auth_context = self._create_auth_context()
-        upload_url_body = self._request_upload_url(artifact, auth_context)
-        url_info = upload_url_body.get("urlInfo")
-        if not isinstance(url_info, Mapping):
-            raise HuaweiApiError("Huawei upload URL response did not include urlInfo.")
+        try:
+            auth_context = self._create_auth_context()
+        except Exception as exc:
+            raise _stage_error("authentication", exc) from exc
 
-        signed_url = _required_mapping_string(url_info, "url")
-        object_id = _required_mapping_string(url_info, "objectId")
-        upload_method = _optional_mapping_string(url_info, "method") or "PUT"
-        upload_headers = _string_mapping(url_info.get("headers"))
+        object_id: str | None = None
+        try:
+            upload_url_body = self._request_upload_url(artifact, auth_context)
+            url_info = upload_url_body.get("urlInfo")
+            if not isinstance(url_info, Mapping):
+                raise HuaweiApiError("Huawei upload URL response did not include urlInfo")
+            signed_url = _required_mapping_string(url_info, "url")
+            object_id = _required_mapping_string(url_info, "objectId")
+            upload_method = _optional_mapping_string(url_info, "method") or "PUT"
+            upload_headers = _string_mapping(url_info.get("headers"))
+            _validate_upload_target(signed_url, upload_method)
+        except Exception as exc:
+            raise _stage_error("upload URL acquisition", exc, object_id=object_id) from exc
 
-        self._upload_artifact(artifact.path, signed_url, upload_method, upload_headers)
-        self._update_app_file_info(artifact, object_id, auth_context)
-        self._sleeper(float(self._config.parse_wait_seconds))
-        self._submit(auth_context)
+        try:
+            self._upload_artifact(artifact.path, signed_url, upload_headers)
+        except Exception as exc:
+            raise _stage_error("artifact upload", exc, object_id=object_id) from exc
+
+        try:
+            self._update_app_file_info(artifact, object_id, auth_context)
+        except Exception as exc:
+            raise _stage_error("app file attachment", exc, object_id=object_id) from exc
+
+        if self._config.release_mode is ReleaseMode.DRAFT:
+            return PublishResult(object_id=object_id, submitted=False)
+
+        try:
+            self._sleeper(float(self._config.parse_wait_seconds))
+        except Exception as exc:
+            raise _stage_error("package parsing wait", exc, object_id=object_id) from exc
+        try:
+            self._submit(auth_context)
+        except Exception as exc:
+            raise _stage_error(
+                "app submission",
+                exc,
+                object_id=object_id,
+                ambiguous_submission=_submission_outcome_is_ambiguous(exc),
+            ) from exc
 
         return PublishResult(object_id=object_id, submitted=True)
 
@@ -177,7 +284,9 @@ class HuaweiClient:
                         "grant_type": "client_credentials",
                     }
                 ),
-            )
+            ),
+            retry=True,
+            include_error_body=False,
         )
         access_token = body.get("access_token")
         if not isinstance(access_token, str) or access_token.strip() == "":
@@ -205,7 +314,8 @@ class HuaweiClient:
                 method="GET",
                 url=url,
                 headers={**auth_context.headers, "Content-Type": "application/json"},
-            )
+            ),
+            retry=True,
         )
         _assert_huawei_success(body, "Obtaining Huawei upload URL")
         return body
@@ -214,16 +324,17 @@ class HuaweiClient:
         self,
         artifact_path: Path,
         signed_url: str,
-        upload_method: str,
         upload_headers: Mapping[str, str],
     ) -> None:
-        response = self._transport(
+        response = self._send(
             HttpRequest(
-                method=upload_method,
+                method="PUT",
                 url=signed_url,
                 headers=dict(upload_headers),
                 body=artifact_path.read_bytes(),
-            )
+                timeout=UPLOAD_TIMEOUT_SECONDS,
+            ),
+            retry=False,
         )
         if not response.ok:
             raise HuaweiApiError(
@@ -251,7 +362,8 @@ class HuaweiClient:
                         "files": [{"fileDestUrl": object_id, "fileName": artifact.file_name}],
                     }
                 ),
-            )
+            ),
+            retry=True,
         )
         _assert_huawei_success(body, "Updating Huawei app file information")
 
@@ -270,12 +382,38 @@ class HuaweiClient:
                 url=url,
                 headers={**auth_context.headers, "Content-Type": "application/json"},
                 body=_json_bytes({}),
-            )
+            ),
+            retry=False,
         )
         _assert_huawei_success(body, "Submitting Huawei app for release")
 
-    def _request_json(self, request: HttpRequest) -> dict[str, object]:
-        return _parse_json_response(self._transport(request), request.url)
+    def _request_json(
+        self,
+        request: HttpRequest,
+        *,
+        retry: bool,
+        include_error_body: bool = True,
+    ) -> dict[str, object]:
+        return _parse_json_response(
+            self._send(request, retry=retry),
+            include_error_body=include_error_body,
+        )
+
+    def _send(self, request: HttpRequest, *, retry: bool) -> HttpResponse:
+        attempts = MAX_ATTEMPTS if retry else 1
+        for attempt in range(attempts):
+            try:
+                response = self._transport(request)
+            except OSError as exc:
+                if attempt + 1 == attempts:
+                    raise HuaweiApiError(
+                        f"Huawei request failed after {attempts} attempt(s) due to a network error"
+                    ) from exc
+            else:
+                if response.status not in RETRYABLE_STATUSES or attempt + 1 == attempts:
+                    return response
+            self._sleeper(float(2**attempt))
+        raise AssertionError("retry loop did not return or raise")
 
 
 def _required_mapping_string(mapping: Mapping[object, object], key: str) -> str:
@@ -283,6 +421,34 @@ def _required_mapping_string(mapping: Mapping[object, object], key: str) -> str:
     if not isinstance(value, str) or value.strip() == "":
         raise HuaweiApiError(f"Huawei response did not include urlInfo.{key}.")
     return value
+
+
+def _validate_upload_target(signed_url: str, method: str) -> None:
+    try:
+        parsed = urllib.parse.urlsplit(signed_url)
+        port = parsed.port
+    except ValueError as exc:
+        raise HuaweiApiError("Huawei returned an invalid signed upload URL") from exc
+    if (
+        parsed.scheme.lower() != "https"
+        or parsed.hostname is None
+        or port == 0
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.fragment
+        or any(character.isspace() for character in signed_url)
+    ):
+        raise HuaweiApiError("Huawei returned an invalid signed upload URL")
+    if method.strip().upper() != "PUT":
+        raise HuaweiApiError("Huawei returned an invalid signed upload method; expected PUT")
+
+
+def _submission_outcome_is_ambiguous(error: Exception) -> bool:
+    if isinstance(error, HuaweiRejectedError):
+        return False
+    if isinstance(error, HuaweiHttpError):
+        return not (400 <= error.status < 500 and error.status != 408)
+    return True
 
 
 def _optional_mapping_string(mapping: Mapping[object, object], key: str) -> str | None:

@@ -29,13 +29,17 @@ inputs:
     description: Huawei API client secret for api-client auth mode.
     required: false
   domain:
-    description: Huawei API domain override.
+    description: Official Huawei API domain matching the project's data processing location.
     required: false
     default: https://connect-api.cloud.huawei.com/api
   dry-run:
     description: Validate and print the planned Huawei calls without uploading or submitting.
     required: false
     default: 'false'
+  release-mode:
+    description: 'Huawei release mode: draft uploads and attaches only; production also submits.'
+    required: false
+    default: production
   expected-package:
     description: Expected Android package ID in the AAB.
     required: false
@@ -50,11 +54,11 @@ inputs:
     description: Optional path to bundletool.jar for package and versionCode inspection.
     required: false
   parse-wait-seconds:
-    description: Seconds to wait for Huawei async package parsing before submission.
+    description: Seconds to wait for Huawei async package parsing before production submission; minimum 120.
     required: false
     default: '120'
   release-remark:
-    description: Optional release remark passed to Huawei AppGallery submission.
+    description: Optional 10-300 character remark passed to Huawei AppGallery submission.
     required: false
 
 outputs:
@@ -89,6 +93,11 @@ outputs:
 runs:
   using: composite
   steps:
+    - name: Set up Python
+      uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+      with:
+        python-version: '3.11'
+
     - name: Install AppGallery publisher
       shell: bash
       run: python -m pip install "${GITHUB_ACTION_PATH}"
@@ -106,6 +115,7 @@ runs:
         PUBLISH_TO_APPGALLERY_CLIENT_SECRET: ${{ inputs.client-secret }}
         PUBLISH_TO_APPGALLERY_DOMAIN: ${{ inputs.domain }}
         PUBLISH_TO_APPGALLERY_DRY_RUN: ${{ inputs.dry-run }}
+        PUBLISH_TO_APPGALLERY_RELEASE_MODE: ${{ inputs.release-mode }}
         PUBLISH_TO_APPGALLERY_EXPECTED_PACKAGE: ${{ inputs.expected-package }}
         PUBLISH_TO_APPGALLERY_MIN_VERSION_CODE: ${{ inputs.min-version-code }}
         PUBLISH_TO_APPGALLERY_MAX_AAB_SIZE_MB: ${{ inputs.max-aab-size-mb }}
@@ -113,4 +123,3 @@ runs:
         PUBLISH_TO_APPGALLERY_PARSE_WAIT_SECONDS: ${{ inputs.parse-wait-seconds }}
         PUBLISH_TO_APPGALLERY_RELEASE_REMARK: ${{ inputs.release-remark }}
       run: python -m publish_to_appgallery
-

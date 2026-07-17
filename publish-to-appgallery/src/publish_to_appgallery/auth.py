@@ -63,8 +63,9 @@ def create_service_account_jwt(
     key_id = _required_string(service_account, "key_id")
     private_key_bytes = _normalize_private_key(_required_string(service_account, "private_key"))
     sub_account = _required_string(service_account, "sub_account")
-    token_uri_value = service_account.get("token_uri")
-    audience = token_uri_value if isinstance(token_uri_value, str) else DEFAULT_TOKEN_AUDIENCE
+    token_uri = service_account.get("token_uri")
+    if token_uri is not None and token_uri != DEFAULT_TOKEN_AUDIENCE:
+        raise ValueError(f"service account token_uri must be {DEFAULT_TOKEN_AUDIENCE}")
 
     private_key = serialization.load_pem_private_key(private_key_bytes, password=None)
     if not isinstance(private_key, RSAPrivateKey):
@@ -73,7 +74,7 @@ def create_service_account_jwt(
     header = _base64_url_json({"alg": "PS256", "kid": key_id, "typ": "JWT"})
     payload = _base64_url_json(
         {
-            "aud": audience,
+            "aud": DEFAULT_TOKEN_AUDIENCE,
             "exp": issued_at + 3600,
             "iat": issued_at,
             "iss": sub_account,

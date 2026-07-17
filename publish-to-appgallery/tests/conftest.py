@@ -1,19 +1,30 @@
 from __future__ import annotations
 
 import subprocess
+import zipfile
 from collections.abc import Sequence
 from pathlib import Path
 
 import pytest
 
+from publish_to_appgallery.artifact import CommandRunner
 from publish_to_appgallery.config import PublishConfig
+
+
+def write_aab(path: Path, members: Sequence[str] | None = None) -> Path:
+    contents = {
+        "BundleConfig.pb": b"bundle-config",
+        "base/manifest/AndroidManifest.xml": b"<manifest />",
+    }
+    with zipfile.ZipFile(path, "w") as archive:
+        for name in contents if members is None else members:
+            archive.writestr(name, contents.get(name, b"fixture"))
+    return path
 
 
 @pytest.fixture
 def artifact_path(tmp_path: Path) -> Path:
-    path = tmp_path / "app-release.aab"
-    path.write_bytes(b"fake-aab-content")
-    return path
+    return write_aab(tmp_path / "app-release.aab")
 
 
 def make_config(artifact_path: Path, **overrides: object) -> PublishConfig:
@@ -42,7 +53,7 @@ def make_config(artifact_path: Path, **overrides: object) -> PublishConfig:
     return PublishConfig(**values)  # type: ignore[arg-type]
 
 
-def metadata_runner(package_name: str = "com.example.app", version_code: int = 42):
+def metadata_runner(package_name: str = "com.example.app", version_code: int = 42) -> CommandRunner:
     def run(args: Sequence[str]) -> subprocess.CompletedProcess[str]:
         stdout = str(version_code) if "/manifest/@android:versionCode" in args else package_name
         return subprocess.CompletedProcess(args=list(args), returncode=0, stdout=stdout, stderr="")

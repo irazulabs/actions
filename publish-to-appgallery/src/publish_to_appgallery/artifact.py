@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import subprocess
+import zipfile
+import zlib
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -37,7 +40,22 @@ CommandRunner = Callable[[Sequence[str]], subprocess.CompletedProcess[str]]
 
 
 def default_command_runner(args: Sequence[str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(args, capture_output=True, check=True, text=True)
+    env = os.environ.copy()
+    for name in (
+        "SERVICE_ACCOUNT_JSON",
+        "CLIENT_SECRET",
+        "PUBLISH_TO_APPGALLERY_SERVICE_ACCOUNT_JSON",
+        "PUBLISH_TO_APPGALLERY_CLIENT_SECRET",
+    ):
+        env.pop(name, None)
+    return subprocess.run(
+        args,
+        capture_output=True,
+        check=True,
+        env=env,
+        text=True,
+        timeout=60,
+    )
 
 
 def calculate_sha256(path: Path) -> str:
@@ -46,6 +64,21 @@ def calculate_sha256(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _validate_bundle_archive(path: Path) -> None:
+    required_members = {"BundleConfig.pb", "base/manifest/AndroidManifest.xml"}
+    try:
+        with zipfile.ZipFile(path) as archive:
+            members = set(archive.namelist())
+            corrupt_member = archive.testzip()
+    except (zipfile.BadZipFile, EOFError, OSError, RuntimeError, zlib.error) as exc:
+        raise ArtifactError(f"AAB is not a valid ZIP archive: {path}") from exc
+
+    if corrupt_member is not None:
+        raise ArtifactError(f"AAB contains a corrupt ZIP member: {corrupt_member}")
+    if missing := required_members - members:
+        raise ArtifactError(f"AAB is missing required members: {', '.join(sorted(missing))}")
 
 
 def _strip_bundletool_output(value: str) -> str | None:
@@ -105,7 +138,7 @@ def inspect_bundle_metadata(
             bundletool_jar,
             runner,
         )
-    except (FileNotFoundError, subprocess.CalledProcessError) as exc:
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
         return BundleMetadata(inspection_error=str(exc))
 
     version_code = (
@@ -121,15 +154,23 @@ def validate_artifact(
     path = config.artifact_path.resolve()
     if path.suffix.lower() != ".aab":
         raise ArtifactError(f"Expected an Android App Bundle (.aab), received {path}.")
+    if len(path.name) > 256:
+        raise ArtifactError("AAB filename must be 256 characters or fewer.")
     if not path.is_file():
         raise ArtifactError(f"Artifact path is not a file: {path}")
 
     size_bytes = path.stat().st_size
+    if size_bytes == 0:
+        raise ArtifactError("AAB is empty.")
     if size_bytes > config.max_aab_size_bytes:
         raise ArtifactError(
             f"AAB is {size_bytes} bytes, which exceeds the configured "
             f"{config.max_aab_size_bytes} byte limit."
         )
+    _validate_bundle_archive(path)
+
+    if config.bundletool_jar is not None and not config.bundletool_jar.is_file():
+        raise ArtifactError(f"bundletool JAR path is not a file: {config.bundletool_jar}")
 
     metadata_required = config.expected_package is not None or config.min_version_code is not None
     metadata = inspect_bundle_metadata(path, config.bundletool_jar, command_runner)

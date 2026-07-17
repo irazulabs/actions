@@ -3,10 +3,12 @@ from __future__ import annotations
 import base64
 import json
 
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric import rsa
+import pytest
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import padding, rsa
+from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey
 
-from publish_to_appgallery.auth import create_service_account_jwt
+from publish_to_appgallery.auth import DEFAULT_TOKEN_AUDIENCE, create_service_account_jwt
 
 
 def _decode_segment(segment: str) -> dict[str, object]:
@@ -17,27 +19,63 @@ def _decode_segment(segment: str) -> dict[str, object]:
     return parsed
 
 
-def service_account_json() -> str:
+def _decode_bytes(segment: str) -> bytes:
+    return base64.urlsafe_b64decode((segment + "=" * (-len(segment) % 4)).encode("ascii"))
+
+
+def service_account() -> tuple[RSAPrivateKey, str]:
     private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     pem = private_key.private_bytes(
         encoding=serialization.Encoding.PEM,
         format=serialization.PrivateFormat.PKCS8,
         encryption_algorithm=serialization.NoEncryption(),
     ).decode("utf-8")
-    return json.dumps(
+    return private_key, json.dumps(
         {
             "key_id": "test-key-id",
             "private_key": pem,
             "sub_account": "test-sub-account",
-            "token_uri": "https://oauth-login.cloud.huawei.com/oauth2/v3/token",
+            "token_uri": DEFAULT_TOKEN_AUDIENCE,
         }
     )
 
 
-def test_service_account_jwt_uses_ps256_header_and_key_id() -> None:
-    jwt = create_service_account_jwt(service_account_json(), issued_at_seconds=1782780000)
+def service_account_json() -> str:
+    return service_account()[1]
+
+
+def test_service_account_jwt_has_expected_claims_and_valid_signature() -> None:
+    private_key, credentials = service_account()
+    jwt = create_service_account_jwt(credentials, issued_at_seconds=1782780000)
     header, payload, signature = jwt.split(".")
 
-    assert signature
     assert _decode_segment(header) == {"alg": "PS256", "kid": "test-key-id", "typ": "JWT"}
-    assert _decode_segment(payload)["iss"] == "test-sub-account"
+    assert _decode_segment(payload) == {
+        "aud": DEFAULT_TOKEN_AUDIENCE,
+        "exp": 1782783600,
+        "iat": 1782780000,
+        "iss": "test-sub-account",
+    }
+    private_key.public_key().verify(
+        _decode_bytes(signature),
+        f"{header}.{payload}".encode("ascii"),
+        padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=32),
+        hashes.SHA256(),
+    )
+
+
+def test_service_account_jwt_rejects_invalid_token_uri() -> None:
+    _, credentials = service_account()
+    parsed = json.loads(credentials)
+    parsed["token_uri"] = "https://example.com/token"
+
+    with pytest.raises(ValueError, match="token_uri"):
+        create_service_account_jwt(json.dumps(parsed), issued_at_seconds=1782780000)
+
+
+def test_service_account_jwt_allows_omitted_token_uri() -> None:
+    _, credentials = service_account()
+    parsed = json.loads(credentials)
+    del parsed["token_uri"]
+
+    create_service_account_jwt(json.dumps(parsed), issued_at_seconds=1782780000)
