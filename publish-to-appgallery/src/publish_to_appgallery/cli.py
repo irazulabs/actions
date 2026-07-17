@@ -8,18 +8,24 @@ from pathlib import Path
 
 from publish_to_appgallery.artifact import ArtifactInfo, CommandRunner, validate_artifact
 from publish_to_appgallery.client import HuaweiClient, PublishResult, Sleeper, Transport
-from publish_to_appgallery.config import PublishConfig, load_config
+from publish_to_appgallery.config import PublishConfig, ReleaseMode, load_config
 from publish_to_appgallery.outputs import write_github_outputs
 
 
 def _planned_operations(config: PublishConfig, artifact: ArtifactInfo) -> list[str]:
-    return [
+    operations = [
         f"GET /publish/v2/upload-url/for-obs for {artifact.file_name}",
         f"PUT signed OBS upload URL for {artifact.file_name}",
         f"PUT /publish/v2/app-file-info with fileType=5 for {artifact.file_name}",
-        f"wait {config.parse_wait_seconds}s for Huawei package parsing",
-        "POST /publish/v2/app-submit releaseType=1",
     ]
+    if config.release_mode is ReleaseMode.PRODUCTION:
+        operations.extend(
+            [
+                f"wait {config.parse_wait_seconds}s for Huawei package parsing",
+                "POST /publish/v2/app-submit releaseType=1",
+            ]
+        )
+    return operations
 
 
 def _summary(
@@ -39,6 +45,7 @@ def _summary(
         "dryRun": config.dry_run,
         "objectId": result.object_id,
         "operations": _planned_operations(config, artifact),
+        "releaseMode": config.release_mode.value,
         "submitted": result.submitted,
     }
 

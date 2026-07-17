@@ -8,3 +8,5 @@ __pycache__/
 *.pyc
 build/
 dist/
+.playwright-mcp/
+.serena/
