@@ -5,6 +5,8 @@ from pathlib import Path
 
 import yaml
 
+from publish_to_appgallery import __version__
+
 ROOT = Path(__file__).resolve().parents[2]
 ACTION = ROOT / "publish-to-appgallery"
 
@@ -92,7 +94,7 @@ def test_action_metadata_exposes_public_contract() -> None:
 def test_python_package_matches_action_runtime() -> None:
     package = tomllib.loads((ACTION / "pyproject.toml").read_text(encoding="utf-8"))
 
-    assert package["project"]["version"] == "1.0.0"
+    assert package["project"]["version"] == __version__ == "1.1.0"
     assert package["project"]["requires-python"] == ">=3.11"
     assert package["project"]["scripts"]["publish-to-appgallery"] == (
         "publish_to_appgallery.cli:main"

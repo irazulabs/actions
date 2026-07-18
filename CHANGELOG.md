@@ -2,6 +2,13 @@
 
 All notable changes to this repository will be documented here.
 
+## 1.1.0
+
+- Add `update-gcs-cors` for authenticated workflows to apply validated Cloud
+  Storage bucket CORS policies.
+- Add least-privilege Google Cloud IAM and Workload Identity Federation guidance.
+- Validate every action package in the monorepo release workflow.
+
 ## 1.0.0
 
 - Add draft uploads that attach an AAB without submitting it.

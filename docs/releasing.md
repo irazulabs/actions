@@ -13,18 +13,18 @@ repository rather than published through GitHub Marketplace.
 Stable releases publish an immutable semantic version tag and a moving
 compatible-major tag.
 
-1. Update the package version, changelog, and public docs for `v1.0.0`.
+1. Update every package version, the changelog, and public docs for the release.
 2. Merge the release commit to the default branch and confirm validation passes.
 3. Manually dispatch [`.github/workflows/release.yml`](../.github/workflows/release.yml)
-   from the default branch with `version` set to `v1.0.0`.
+   from the default branch with `version` set to a version such as `v1.1.0`.
 4. Approve the job through the protected `release` environment.
-5. Confirm the `v1.0.0` tag, `v1` tag, and GitHub Release point to the expected
-   commit, and confirm `v0.0.1` is marked as a prerelease.
+5. Confirm the immutable version tag, `v1` tag, and GitHub Release point to the
+   expected commit.
 
-The workflow validates the semantic version and action, rejects semantic or
-commit rollback of the major tag, creates the immutable annotated `v1.0.0`
+The workflow validates the semantic version and every action, rejects semantic
+or commit rollback of the major tag, creates the immutable annotated version
 tag, force-moves the `v1` major tag to the same commit, and creates the GitHub
-Release. The `v1.0.0` run also marks `v0.0.1` as a prerelease.
+Release. The initial `v1.0.0` run also marked `v0.0.1` as a prerelease.
 
 ## Versioning
 
@@ -41,6 +41,7 @@ is immutable.
 
 ```yaml
 uses: irazulabs/actions/publish-to-appgallery@<full-40-character-commit-sha> # v1.0.0
+uses: irazulabs/actions/update-gcs-cors@<full-40-character-commit-sha> # v1.1.0
 ```
 
 Use `git rev-list -n 1 v0.0.1` to resolve the preview tag to its commit. Do not

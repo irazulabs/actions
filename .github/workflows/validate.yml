@@ -43,6 +43,41 @@ jobs:
       - name: Pytest
         run: pytest publish-to-appgallery
 
+  update-gcs-cors:
+    name: update-gcs-cors / python ${{ matrix.python-version }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version:
+          - '3.11'
+          - '3.12'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Setup Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install dependencies
+        run: python -m pip install -e update-gcs-cors[dev]
+
+      - name: Ruff lint
+        run: ruff check update-gcs-cors
+
+      - name: Ruff format
+        run: ruff format --check update-gcs-cors
+
+      - name: Mypy
+        run: mypy update-gcs-cors/src
+
+      - name: Pytest
+        run: pytest update-gcs-cors
+
   composite-smoke:
     name: publish-to-appgallery / composite smoke
     runs-on: ubuntu-24.04
@@ -85,3 +120,42 @@ jobs:
           test "$DRY_RUN" = true
           test -z "$OBJECT_ID"
           test "$SUBMITTED" = false
+
+  gcs-cors-composite-smoke:
+    name: update-gcs-cors / composite smoke
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Create CORS policy
+        shell: python
+        run: |
+          import json
+
+          with open("cors.json", "w", encoding="utf-8") as policy:
+              json.dump([{"origin": ["https://example.com"], "method": ["GET"]}], policy)
+
+      - name: Run action
+        id: cors
+        uses: ./update-gcs-cors
+        with:
+          bucket: smoke-bucket
+          cors-file: cors.json
+          dry-run: 'true'
+
+      - name: Verify outputs
+        shell: bash
+        env:
+          BUCKET: ${{ steps.cors.outputs.bucket }}
+          CORS_FILE: ${{ steps.cors.outputs.cors-file }}
+          SHA256: ${{ steps.cors.outputs.cors-sha256 }}
+          RULE_COUNT: ${{ steps.cors.outputs.rule-count }}
+          DRY_RUN: ${{ steps.cors.outputs.dry-run }}
+        run: |
+          test "$BUCKET" = smoke-bucket
+          test "$CORS_FILE" = "$GITHUB_WORKSPACE/cors.json"
+          [[ "$SHA256" =~ ^[0-9a-f]{64}$ ]]
+          test "$RULE_COUNT" = 1
+          test "$DRY_RUN" = true
