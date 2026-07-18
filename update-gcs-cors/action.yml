@@ -1,0 +1,70 @@
+name: Update GCS CORS
+author: Irazu Labs
+description: Apply a JSON CORS configuration to a Google Cloud Storage bucket.
+branding:
+  icon: cloud
+  color: blue
+
+inputs:
+  bucket:
+    description: Google Cloud Storage bucket name or gs:// bucket URL.
+    required: true
+  cors-file:
+    description: Local JSON file containing the complete desired CORS rule list.
+    required: true
+  dry-run:
+    description: Validate and report the planned update without contacting Google Cloud.
+    required: false
+    default: 'false'
+
+outputs:
+  bucket:
+    description: Normalized Google Cloud Storage bucket name.
+    value: ${{ steps.update.outputs.bucket }}
+  cors-file:
+    description: Resolved path to the validated CORS file.
+    value: ${{ steps.update.outputs.cors-file }}
+  cors-sha256:
+    description: SHA-256 digest of the validated CORS file.
+    value: ${{ steps.update.outputs.cors-sha256 }}
+  rule-count:
+    description: Number of CORS rules in the desired policy.
+    value: ${{ steps.update.outputs.rule-count }}
+  dry-run:
+    description: Whether the action ran without contacting Google Cloud.
+    value: ${{ steps.update.outputs.dry-run }}
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+      with:
+        python-version: '3.11'
+
+    - name: Install GCS CORS updater
+      shell: bash
+      run: python -m pip install "${GITHUB_ACTION_PATH}"
+
+    - name: Validate CORS update
+      shell: bash
+      env:
+        UPDATE_GCS_CORS_BUCKET: ${{ inputs.bucket }}
+        UPDATE_GCS_CORS_FILE: ${{ inputs.cors-file }}
+        UPDATE_GCS_CORS_DRY_RUN: ${{ inputs.dry-run }}
+      run: python -m update_gcs_cors --validate-only
+
+    - name: Set up Google Cloud CLI
+      if: inputs['dry-run'] != 'true'
+      uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
+      with:
+        version: '576.0.0'
+
+    - name: Update bucket CORS
+      id: update
+      shell: bash
+      env:
+        UPDATE_GCS_CORS_BUCKET: ${{ inputs.bucket }}
+        UPDATE_GCS_CORS_FILE: ${{ inputs.cors-file }}
+        UPDATE_GCS_CORS_DRY_RUN: ${{ inputs.dry-run }}
+      run: python -m update_gcs_cors

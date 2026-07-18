@@ -42,20 +42,36 @@ jobs:
         shell: bash
         run: |
           [[ "$VERSION" =~ ^v[1-9][0-9]*\.[0-9]+\.[0-9]+$ ]]
-          test "${VERSION#v}" = "$(python -c 'import tomllib; print(tomllib.load(open("publish-to-appgallery/pyproject.toml", "rb"))["project"]["version"])')"
+          python - <<'PY'
+          import glob
+          import os
+          import tomllib
+
+          expected = os.environ["VERSION"].removeprefix("v")
+          for path in glob.glob("*/pyproject.toml"):
+              with open(path, "rb") as package:
+                  actual = tomllib.load(package)["project"]["version"]
+              assert actual == expected, f"{path} version {actual} does not match {expected}"
+          PY
           if git rev-parse "$VERSION" >/dev/null 2>&1; then
             test "$(git rev-list -n 1 "$VERSION")" = "$GITHUB_SHA"
           fi
 
       - name: Install dependencies
-        run: python -m pip install -e publish-to-appgallery[dev]
+        run: |
+          python -m pip install -e publish-to-appgallery[dev]
+          python -m pip install -e update-gcs-cors[dev]
 
-      - name: Validate action
+      - name: Validate actions
         run: |
           ruff check publish-to-appgallery
+          ruff check update-gcs-cors
           ruff format --check publish-to-appgallery
+          ruff format --check update-gcs-cors
           mypy publish-to-appgallery/src
+          mypy update-gcs-cors/src
           pytest publish-to-appgallery
+          pytest update-gcs-cors
 
       - name: Publish tags and release
         env:

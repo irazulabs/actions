@@ -26,15 +26,21 @@ uses: irazulabs/actions/publish-to-appgallery@<full-40-character-commit-sha> # v
 | Action | Description |
 | --- | --- |
 | [`publish-to-appgallery`](publish-to-appgallery/README.md) | Publish an Android App Bundle to Huawei AppGallery. |
+| [`update-gcs-cors`](update-gcs-cors/README.md) | Apply a CORS configuration to a Google Cloud Storage bucket. |
 
 ## Development
 
 ```sh
 python -m pip install -e publish-to-appgallery[dev]
+python -m pip install -e update-gcs-cors[dev]
 ruff check publish-to-appgallery
+ruff check update-gcs-cors
 ruff format --check publish-to-appgallery
+ruff format --check update-gcs-cors
 mypy publish-to-appgallery/src
+mypy update-gcs-cors/src
 pytest publish-to-appgallery
+pytest update-gcs-cors
 ```
 
 ## Release Model

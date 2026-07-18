@@ -6,7 +6,11 @@
 __pycache__/
 *.egg-info/
 *.pyc
+*.whl
+.coverage
 build/
 dist/
+htmlcov/
+gha-creds-*.json
 .playwright-mcp/
 .serena/

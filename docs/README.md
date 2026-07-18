@@ -18,3 +18,6 @@ Audience: users, maintainers, and agents.
 - [Huawei credentials](../publish-to-appgallery/docs/huawei-credentials.md)
 - [EAS integration](../publish-to-appgallery/docs/eas-integration.md)
 - [Action development](../publish-to-appgallery/docs/development.md)
+- [`update-gcs-cors`](../update-gcs-cors/README.md)
+- [GCS CORS usage and IAM](../update-gcs-cors/docs/usage.md)
+- [GCS CORS action development](../update-gcs-cors/docs/development.md)
